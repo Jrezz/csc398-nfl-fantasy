@@ -1,0 +1,17 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Raw downloads (large, re-fetchable with run_pipeline.py --force)
+data/raw/
+
+# Keep processed data and results so the deployed dashboard works
+# data/processed/   ← intentionally NOT ignored
+# results/          ← intentionally NOT ignored
+
+# macOS
+.DS_Store

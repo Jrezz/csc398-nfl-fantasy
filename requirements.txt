@@ -1,0 +1,12 @@
+# Dashboard + ML evaluation (used by both the pipeline and the deployed app)
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+streamlit>=1.30
+plotly>=5.18
+
+# Pipeline only (data fetching) — not needed on Streamlit Cloud
+# nfl_data_py>=4.3
+# requests>=2.31
+# matplotlib>=3.7
+# seaborn>=0.13
