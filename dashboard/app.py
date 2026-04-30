@@ -267,7 +267,7 @@ with st.sidebar:
     sel_models    = st.multiselect("Models",    MODELS,    default=MODELS)
 
     st.divider()
-    st.caption("**Team**  \nJustin Rzepko  \nTiago Freitas  \nJeremiah Trails  \n  \nProf. Antonios / Martin")
+    st.caption("**Team**  \nJustin Rzepko  \nTiago Freitas  \nJeremiah Trail  \n  \nProf. Antonios / Martin")
 
 
 # ── active selections with fallbacks ─────────────────────────────────────────
@@ -881,7 +881,7 @@ st.divider()
 st.markdown(
     f'<p style="text-align:center;color:#6e7681;font-size:0.75rem">'
     f'CSC 398 · Spring 2026 &nbsp;·&nbsp; '
-    f'Justin Rzepko · Tiago Freitas · Jeremiah Trails &nbsp;·&nbsp; '
+    f'Justin Rzepko · Tiago Freitas · Jeremiah Trail &nbsp;·&nbsp; '
     f'Prof. Antonios / Martin</p>',
     unsafe_allow_html=True,
 )
