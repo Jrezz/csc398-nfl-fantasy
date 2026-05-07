@@ -1,22 +1,35 @@
 """
 NFL Fantasy Performance Prediction — Streamlit Dashboard
 CSC 398 · Spring 2026  |  streamlit run dashboard/app.py
+
+Reads pre-computed output from run_pipeline.py:
+    data/processed/features.csv  - engineered feature set (all seasons)
+    results/metrics.json         - model performance by position
+    results/feature_importance.json
+    results/predictions.csv      - holdout predictions for each model
+
+All charts are built with Plotly so they remain interactive in the browser.
 """
 
-import os, sys, json
+import os
+import sys
+import json
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-# ── Path fix (works regardless of launch directory) ───────────────────────────
+# Resolve the project root regardless of where streamlit is launched from.
+# os.chdir ensures that relative file paths (e.g., "results/metrics.json")
+# work the same way whether the dashboard is started from the project root
+# or from the dashboard/ subdirectory.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
-# ── Page config (must be first Streamlit call) ────────────────────────────────
+# set_page_config must be the very first Streamlit call in the script.
+# Calling any other st.* function before this raises a StreamlitAPIException.
 st.set_page_config(
     page_title="NFL Fantasy · CSC 398",
     page_icon="🏈",
@@ -24,19 +37,21 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# DESIGN SYSTEM
-# ═══════════════════════════════════════════════════════════════════════════════
-SURFACE   = "#161b22"
-BORDER    = "#30363d"
-TEXT_PRI  = "#e6edf3"
-TEXT_SEC  = "#8b949e"
-BLUE      = "#58a6ff"
-GREEN     = "#3fb950"
-GOLD      = "#d29922"
-PURPLE    = "#bc8cff"
-RED       = "#f85149"
+# --- Color palette ---
+# Consistent with GitHub dark theme so charts look good on most monitors.
+# These are referenced in both the injected CSS and the Plotly traces.
+SURFACE  = "#161b22"
+BORDER   = "#30363d"
+TEXT_PRI = "#e6edf3"
+TEXT_SEC = "#8b949e"
+BLUE     = "#58a6ff"
+GREEN    = "#3fb950"
+GOLD     = "#d29922"
+PURPLE   = "#bc8cff"
+RED      = "#f85149"
 
+# Each position and model gets a consistent color across all charts so the
+# reader doesn't have to re-learn the legend on every tab.
 POS_COLOR = {"QB": BLUE, "RB": GREEN, "WR": GOLD, "TE": PURPLE}
 MDL_COLOR = {
     "Ridge":         BLUE,
@@ -50,6 +65,9 @@ MODELS       = ["Ridge", "KNN", "Decision Tree", "Random Forest"]
 HOLDOUT_YEAR = 2024
 TARGET       = "fantasy_points_ppr"
 
+# Feature lists are duplicated here (also defined in src/feature_engineering.py)
+# so the dashboard has no hard dependency on the pipeline source code. This
+# allows the dashboard to run without nfl_data_py installed.
 POSITION_FEATURES = {
     "QB": ["rolling_avg_pts_1","rolling_avg_pts_3","rolling_avg_pts_5",
            "season_avg_pts","passing_yards_roll3","completion_pct_roll3",
@@ -70,16 +88,18 @@ POSITION_FEATURES = {
            "implied_team_total","vegas_total","home","snap_pct","injury_encoded"],
 }
 
+# Rolling window labels map to the feature column names computed during
+# feature engineering. Used in Tab 5 to compare window sizes as naive baselines.
 WINDOWS = {
-    "1 Game":    "rolling_avg_pts_1",
-    "3 Games":   "rolling_avg_pts_3",
-    "5 Games":   "rolling_avg_pts_5",
-    "Season Avg":"season_avg_pts",
+    "1 Game":     "rolling_avg_pts_1",
+    "3 Games":    "rolling_avg_pts_3",
+    "5 Games":    "rolling_avg_pts_5",
+    "Season Avg": "season_avg_pts",
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CSS
-# ═══════════════════════════════════════════════════════════════════════════════
+# --- Global CSS ---
+# Injected once at startup. Overrides Streamlit's default styling to match
+# the dark color palette and tighten spacing on cards, tabs, and tables.
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -88,25 +108,21 @@ html, body, [class*="css"] {{
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }}
 
-/* ── Layout ── */
 .block-container {{
     padding: 2rem 2rem 3rem 2rem !important;
     max-width: 1440px !important;
 }}
 
-/* ── Typography ── */
 h1, h2, h3 {{ color: {TEXT_PRI} !important; }}
 h3 {{ font-size: 1.05rem !important; font-weight: 600 !important; margin-bottom: 0 !important; }}
 p {{ color: {TEXT_SEC}; font-size: 0.875rem; }}
 
-/* ── Sidebar ── */
 section[data-testid="stSidebar"] {{
     background: #0d1117 !important;
     border-right: 1px solid {BORDER};
 }}
 section[data-testid="stSidebar"] > div {{ padding: 1.5rem 1.25rem; }}
 
-/* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {{
     gap: 0;
     background: {SURFACE};
@@ -131,7 +147,6 @@ section[data-testid="stSidebar"] > div {{ padding: 1.5rem 1.25rem; }}
 .stTabs [data-baseweb="tab-highlight"] {{ display: none; }}
 .stTabs [data-baseweb="tab-border"]   {{ display: none; }}
 
-/* ── KPI cards ── */
 .kpi-card {{
     background: {SURFACE};
     border: 1px solid {BORDER};
@@ -153,7 +168,6 @@ section[data-testid="stSidebar"] > div {{ padding: 1.5rem 1.25rem; }}
     margin-top: 6px;
 }}
 
-/* ── Section label (overline) ── */
 .overline {{
     font-size: 0.65rem;
     font-weight: 600;
@@ -164,7 +178,6 @@ section[data-testid="stSidebar"] > div {{ padding: 1.5rem 1.25rem; }}
     display: block;
 }}
 
-/* ── Insight strip ── */
 .insight {{
     background: {SURFACE};
     border: 1px solid {BORDER};
@@ -176,7 +189,6 @@ section[data-testid="stSidebar"] > div {{ padding: 1.5rem 1.25rem; }}
     margin-bottom: 6px;
 }}
 
-/* ── Top-5 feature rows ── */
 .feat-row {{
     display: flex;
     justify-content: space-between;
@@ -188,36 +200,30 @@ section[data-testid="stSidebar"] > div {{ padding: 1.5rem 1.25rem; }}
 .feat-name {{ color: {TEXT_PRI}; }}
 .feat-val  {{ color: {TEXT_SEC}; font-variant-numeric: tabular-nums; }}
 
-/* ── Divider ── */
 hr {{ border-color: {BORDER} !important; margin: 1.25rem 0 !important; }}
 
-/* ── Dataframe ── */
 .stDataFrame {{ border-radius: 8px !important; }}
 [data-testid="stMetricValue"] {{ font-size: 1.4rem !important; }}
 </style>
 """, unsafe_allow_html=True)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CHART THEME
-# ═══════════════════════════════════════════════════════════════════════════════
+# --- Shared chart layout ---
+# All Plotly figures use this as a base so colors, fonts, and grid lines are
+# consistent across tabs without repeating the same kwargs on every figure.
 _BASE_LAYOUT = dict(
     template="plotly_dark",
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
     font=dict(family="Inter, sans-serif", color=TEXT_SEC, size=11.5),
-    legend=dict(
-        bgcolor="rgba(0,0,0,0)",
-        font=dict(size=11),
-        borderwidth=0,
-    ),
+    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11), borderwidth=0),
     hoverlabel=dict(bgcolor="#21262d", font_size=12, bordercolor=BORDER),
     xaxis=dict(gridcolor="#21262d", linecolor=BORDER, tickcolor=BORDER),
     yaxis=dict(gridcolor="#21262d", linecolor=BORDER, tickcolor=BORDER),
 )
 
 def chart(**overrides) -> dict:
-    """Return a merged layout dict — never set xaxis/yaxis directly in overrides."""
+    """Merge caller overrides into the base layout dict."""
     out = dict(_BASE_LAYOUT)
     out["margin"] = overrides.pop("margin", dict(t=32, b=32, l=16, r=16))
     out["height"]  = overrides.pop("height", 380)
@@ -225,9 +231,9 @@ def chart(**overrides) -> dict:
     return out
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# DATA LOADERS
-# ═══════════════════════════════════════════════════════════════════════════════
+# --- Data loaders ---
+# @st.cache_data means each file is read from disk only once per session.
+# Subsequent interactions that call these functions hit the in-memory cache.
 @st.cache_data
 def load_metrics():
     p = os.path.join(ROOT, "results", "metrics.json")
@@ -255,11 +261,9 @@ importances  = load_importances()
 features_df  = load_features()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
-# ═══════════════════════════════════════════════════════════════════════════════
+# --- Sidebar ---
 with st.sidebar:
-    st.markdown("### 🏈 NFL Fantasy Predictor")
+    st.markdown("### NFL Fantasy Predictor")
     st.caption("CSC 398 · Spring 2026")
     st.divider()
 
@@ -269,15 +273,13 @@ with st.sidebar:
     st.divider()
     st.caption("**Team**  \nJustin Rzepko  \nTiago Freitas  \nJeremiah Trail  \n  \nProf. Antonios / Martin")
 
-
-# ── active selections with fallbacks ─────────────────────────────────────────
+# Fall back to all options when the user clears a multiselect entirely,
+# so charts always have something to display.
 active_pos = sel_positions or POSITIONS
 active_mdl = sel_models    or MODELS
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# HEADER
-# ═══════════════════════════════════════════════════════════════════════════════
+# --- Page header ---
 st.markdown(
     f'<span class="overline">CSC 398 · Spring 2026</span>'
     f'<h1 style="font-size:1.75rem;font-weight:700;margin:4px 0 6px;color:{TEXT_PRI}">'
@@ -292,7 +294,7 @@ if metrics_data is None:
     st.error("Pipeline results not found — run `python run_pipeline.py` first.")
     st.stop()
 
-# ── KPI row ───────────────────────────────────────────────────────────────────
+# KPI row — summary stats at a glance above the tabs
 k1, k2, k3, k4 = st.columns(4)
 for col, num, lbl in zip(
     [k1, k2, k3, k4],
@@ -306,21 +308,19 @@ for col, num, lbl in zip(
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TABS
-# ═══════════════════════════════════════════════════════════════════════════════
+# --- Tabs ---
 st.markdown("<div style='margin-top:1.75rem'></div>", unsafe_allow_html=True)
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ["Model Comparison", "Predictions", "EDA", "Feature Importance", "Rolling Window"]
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 1  ·  MODEL COMPARISON
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================
+# TAB 1 — MODEL COMPARISON
+# ============================================================
 with tab1:
 
-    # Build metrics dataframe
+    # Build a flat DataFrame from the nested metrics dict so Plotly can use it.
     rows = []
     for pos in active_pos:
         for mdl in active_mdl:
@@ -338,28 +338,25 @@ with tab1:
 
     mdf = pd.DataFrame(rows)
 
-    # ── Leaderboard ──────────────────────────────────────────────────────────
+    # Leaderboard — pivot to model × position and sort by average holdout MAE
     st.markdown('<span class="overline">Overall Rankings</span>', unsafe_allow_html=True)
     st.markdown("### Model Leaderboard — 2024 Holdout MAE")
     st.caption("Ranked by average MAE across all positions (lower = better).")
 
-    # Build pivot: Model × Position MAE
     pivot = mdf.dropna(subset=["MAE"]).pivot_table(
         index="Model", columns="Position", values="MAE", aggfunc="mean"
     )
-    # keep only positions that exist
     pos_cols = [p for p in POSITIONS if p in pivot.columns]
     pivot = pivot[pos_cols]
     pivot["Avg MAE"] = pivot[pos_cols].mean(axis=1)
     pivot = pivot.sort_values("Avg MAE")
 
-    # Rank medals
-    medals = ["🥇", "🥈", "🥉"] + ["" for _ in range(len(pivot) - 3)]
+    medals = ["1st", "2nd", "3rd"] + ["" for _ in range(len(pivot) - 3)]
     pivot.insert(0, "Rank", medals[: len(pivot)])
     pivot = pivot.reset_index()
 
     def _highlight_best(s):
-        """Bold the minimum in each numeric column."""
+        """Color the minimum value in each numeric column green."""
         is_min = s == s.min()
         return ["font-weight:600; color:#3fb950" if v else "" for v in is_min]
 
@@ -375,7 +372,7 @@ with tab1:
 
     st.divider()
 
-    # ── MAE bar chart ─────────────────────────────────────────────────────────
+    # MAE bar chart — primary metric for comparing models
     st.markdown('<span class="overline">Primary Metric</span>', unsafe_allow_html=True)
     st.markdown("### MAE by Position & Model")
     st.caption("Mean Absolute Error in PPR fantasy points. Lower is better.")
@@ -391,7 +388,6 @@ with tab1:
     fig_mae.update_layout(**chart(height=360))
     st.plotly_chart(fig_mae, use_container_width=True)
 
-    # ── RMSE + R² ─────────────────────────────────────────────────────────────
     col_l, col_r = st.columns(2, gap="medium")
 
     with col_l:
@@ -418,6 +414,7 @@ with tab1:
             labels={"R2": "R²", "Position": ""},
             category_orders={"Position": active_pos, "Model": active_mdl},
         )
+        # Dotted zero line — makes it easy to see which models underperform the mean
         fig_r2.add_hline(y=0, line_dash="dot", line_color="#6e7681", line_width=1)
         fig_r2.update_traces(marker_line_width=0, marker_opacity=0.9)
         fig_r2.update_layout(**chart(height=300, showlegend=False))
@@ -425,7 +422,8 @@ with tab1:
 
     st.divider()
 
-    # ── CV vs Holdout ─────────────────────────────────────────────────────────
+    # CV vs. holdout — checks whether CV scores predicted real-world performance.
+    # If holdout MAE is much higher than CV MAE, the model overfit the training years.
     st.markdown("### Cross-Validation vs. Holdout MAE")
     st.caption("Faded bars = 5-fold TimeSeriesSplit CV (2010–2023). Solid = 2024 holdout. Error bars ±1 std.")
 
@@ -454,12 +452,12 @@ with tab1:
         st.plotly_chart(fig_cv, use_container_width=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 2  ·  PREDICTIONS
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================
+# TAB 2 — PREDICTIONS
+# ============================================================
 with tab2:
     st.markdown("### Predicted vs. Actual — 2024 Holdout")
-    st.caption("Points are coloured by absolute error: blue (near zero) → red (large miss).")
+    st.caption("Points are colored by absolute error: low error = position color, high error = red.")
 
     if preds_df is None:
         st.info("No predictions — run `python run_pipeline.py` first.")
@@ -477,10 +475,10 @@ with tab2:
         sub["error"]    = (sub["predicted"] - sub["actual"]).abs()
         sub["residual"] = sub["predicted"] - sub["actual"]
         mae  = sub["error"].mean()
-        bias = sub["residual"].mean()
+        bias = sub["residual"].mean()   # positive = model tends to over-predict
         over = (sub["predicted"] > sub["actual"]).mean() * 100
 
-        # ── scatter ──────────────────────────────────────────────────────────
+        # Actual vs. predicted scatter with a y=x perfect-prediction reference line
         max_val = max(sub["actual"].max(), sub["predicted"].max()) * 1.08
         fig_sc = go.Figure()
         fig_sc.add_trace(go.Scatter(
@@ -492,6 +490,8 @@ with tab2:
             x=sub["actual"], y=sub["predicted"], mode="markers",
             marker=dict(
                 color=sub["error"],
+                # Color scale: position color at zero error fades to red at high error.
+                # Capped at the 95th percentile so outliers don't wash out the scale.
                 colorscale=[[0, POS_COLOR[s_pos]], [0.5, GOLD], [1, RED]],
                 cmin=0, cmax=sub["error"].quantile(0.95),
                 size=5, opacity=0.7, line=dict(width=0),
@@ -518,7 +518,6 @@ with tab2:
         )
         st.plotly_chart(fig_sc, use_container_width=True)
 
-        # ── metrics strip ────────────────────────────────────────────────────
         m1, m2, m3 = st.columns(3)
         m1.metric("Mean Absolute Error",  f"{mae:.2f} pts")
         m2.metric("Prediction Bias",      f"{bias:+.2f} pts",
@@ -527,15 +526,15 @@ with tab2:
 
         st.divider()
 
-        # ── residuals + overlay distribution ─────────────────────────────────
         col_res, col_ov = st.columns(2, gap="medium")
 
         with col_res:
             st.markdown("### Residual Distribution")
+            # A symmetric, zero-centered distribution indicates the model is unbiased.
             fig_res = px.histogram(
                 sub, x="residual", nbins=40,
                 color_discrete_sequence=[POS_COLOR[s_pos]],
-                labels={"residual": "Predicted − Actual (pts)"},
+                labels={"residual": "Predicted minus Actual (pts)"},
             )
             fig_res.add_vline(x=0,    line_dash="dot",   line_color="#6e7681")
             fig_res.add_vline(x=bias, line_dash="solid", line_color=GOLD,
@@ -547,6 +546,8 @@ with tab2:
 
         with col_ov:
             st.markdown("### Actual vs. Predicted Distribution")
+            # Overlapping histograms show whether the model's predicted distribution
+            # matches the shape of the actual score distribution.
             fig_ov = go.Figure()
             for label, series, color, opac in [
                 ("Actual",    sub["actual"],    POS_COLOR[s_pos], 0.7),
@@ -559,7 +560,7 @@ with tab2:
             fig_ov.update_layout(**chart(barmode="overlay", height=300))
             st.plotly_chart(fig_ov, use_container_width=True)
 
-    # ── all-model grid ────────────────────────────────────────────────────────
+    # All-model side-by-side grid for quick visual comparison
     st.divider()
     st.markdown("### All Models — Side by Side")
     grid_pos = st.selectbox("Position", active_pos, key="grid_pos")
@@ -597,9 +598,9 @@ with tab2:
             col.plotly_chart(fig_g, use_container_width=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 3  ·  EDA
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================
+# TAB 3 — EDA
+# ============================================================
 with tab3:
     st.markdown("### Exploratory Data Analysis")
 
@@ -609,7 +610,6 @@ with tab3:
 
     feat = features_df[features_df["position"].isin(active_pos)].copy()
 
-    # ── summary table ─────────────────────────────────────────────────────────
     st.markdown('<span class="overline">Dataset Summary</span>', unsafe_allow_html=True)
     summary = (
         feat.groupby("position")[TARGET]
@@ -623,7 +623,6 @@ with tab3:
 
     st.divider()
 
-    # ── distribution + box ────────────────────────────────────────────────────
     st.markdown('<span class="overline">Scoring Distribution</span>', unsafe_allow_html=True)
     col_hist, col_box = st.columns(2, gap="medium")
 
@@ -653,7 +652,6 @@ with tab3:
 
     st.divider()
 
-    # ── season trend ──────────────────────────────────────────────────────────
     st.markdown('<span class="overline">Historical Trend</span>', unsafe_allow_html=True)
     st.markdown("### Average Weekly PPR Points by Season")
 
@@ -675,7 +673,8 @@ with tab3:
 
     st.divider()
 
-    # ── correlation heatmap ───────────────────────────────────────────────────
+    # Correlation heatmap — shows which features are most linearly related to PPR score.
+    # Selecting by position is important because the feature lists differ across positions.
     st.markdown('<span class="overline">Feature Correlations</span>', unsafe_allow_html=True)
     st.markdown("### Correlation Heatmap")
 
@@ -699,9 +698,9 @@ with tab3:
     st.plotly_chart(fig_hm, use_container_width=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 4  ·  FEATURE IMPORTANCE
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================
+# TAB 4 — FEATURE IMPORTANCE
+# ============================================================
 with tab4:
     st.markdown("### Random Forest Feature Importance")
     st.caption("Mean decrease in impurity. Higher score = stronger predictive signal.")
@@ -718,7 +717,8 @@ with tab4:
             pd.DataFrame(fi_raw.items(), columns=["Feature", "Importance"])
             .sort_values("Importance", ascending=True)
         )
-        # Normalise to % for cleaner read
+        # Normalize to percentage so the y-axis reads as "share of total importance"
+        # rather than raw impurity values, which are harder to interpret.
         fi_df["Pct"] = fi_df["Importance"] / fi_df["Importance"].sum() * 100
 
         fig_fi = px.bar(
@@ -743,12 +743,12 @@ with tab4:
 
     st.divider()
 
-    # ── top-5 across positions ────────────────────────────────────────────────
+    # Top-5 features across all positions at a glance
     st.markdown("### Top-5 Features by Position")
     p_cols = st.columns(len(active_pos), gap="medium")
 
     for col, pos in zip(p_cols, active_pos):
-        pfi  = importances.get(pos, {})
+        pfi   = importances.get(pos, {})
         total = sum(pfi.values()) or 1
         col.markdown(
             f'<div style="display:inline-block;padding:3px 10px;border-radius:20px;'
@@ -771,13 +771,13 @@ with tab4:
             col.caption("No data")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 5  ·  ROLLING WINDOW
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================
+# TAB 5 — ROLLING WINDOW
+# ============================================================
 with tab5:
     st.markdown("### Rolling Window vs. Season Average")
     st.caption(
-        f"Naïve baseline: how well does each look-back window alone predict PPR points? "
+        f"Naive baseline: how well does each look-back window alone predict PPR points? "
         f"Holdout = {HOLDOUT_YEAR} season."
     )
 
@@ -785,7 +785,9 @@ with tab5:
         st.info("No feature data — run `python run_pipeline.py` first.")
         st.stop()
 
-    # Compute MAE per window × position
+    # For each position × window, compute the MAE of using that single feature
+    # as the prediction. This reveals whether longer windows are more accurate,
+    # and contextualizes how much the full models improve over a simple heuristic.
     rw_rows = []
     for pos in active_pos:
         hold = features_df[
@@ -806,7 +808,6 @@ with tab5:
     rw_df = pd.DataFrame(rw_rows)
     window_order = list(WINDOWS.keys())
 
-    # ── main line chart ───────────────────────────────────────────────────────
     fig_rw = px.line(
         rw_df, x="Window", y="MAE", color="Position",
         color_discrete_map=POS_COLOR, markers=True,
@@ -822,7 +823,6 @@ with tab5:
 
     st.divider()
 
-    # ── per-position mini bars ────────────────────────────────────────────────
     st.markdown("### Breakdown by Position")
     p_cols = st.columns(len(active_pos), gap="small")
     for col, pos in zip(p_cols, active_pos):
@@ -856,8 +856,8 @@ with tab5:
 
     st.divider()
 
-    # ── heatmap ───────────────────────────────────────────────────────────────
-    st.markdown("### MAE Heatmap — Position × Window")
+    # Heatmap — Position × Window MAE grid makes cross-position comparisons easy
+    st.markdown("### MAE Heatmap — Position x Window")
     pivot = rw_df.pivot(index="Position", columns="Window", values="MAE")
     pivot = pivot[[w for w in window_order if w in pivot.columns]]
     fig_hm = px.imshow(
@@ -874,9 +874,7 @@ with tab5:
     st.plotly_chart(fig_hm, use_container_width=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# FOOTER
-# ─────────────────────────────────────────────────────────────────────────────
+# --- Footer ---
 st.divider()
 st.markdown(
     f'<p style="text-align:center;color:#6e7681;font-size:0.75rem">'
